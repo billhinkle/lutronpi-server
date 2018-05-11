@@ -1,0 +1,56 @@
+{
+  "name": "lutronpi",
+  "version": "2.0.0",
+  "description": "Node server connecting Lutron SmartBridge to Samsung SmartThings",
+  "main": "lutronpi.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node app.js"
+  },
+  "keywords": [
+    "Lutron",
+    "SmartBridge",
+    "SmartBridge Pro",
+    "RA/Select",
+    "SmartThings",
+    "Caseta",
+    "Pico"
+  ],
+  "contributors": [
+    "Bill Hinkle <bill@hinkle.us> (https://github.com/billhinkle)",
+    "Nate Schwartz (https://github.com/njschwartz)"
+  ],
+  "license": "ISC",
+  "engines": {
+    "node": ">=6.11"
+  },
+  "files": [
+    "LutronPiServer.js",
+    "bridges/*",
+    "lib/*"
+  ],
+  "dependencies": {
+    "loglevel": ">=1.6.1",
+    "try-require": ">=1.2.1",
+    "getport": ">=0.1.0",
+    "dns": ">=0.2.2",
+    "request": ">=2.85.0",
+    "express": ">=4.16.3",
+    "body-parser": ">=1.18.2",
+    "node-ssdp": ">=3.3.0",
+    "ip": ">=1.1.5",
+    "ipaddr.js": ">=1.7.0",
+    "events": ">=2.0.0",
+    "fs": ">=0.0.1-security",
+    "readline-sync": ">=1.4.9",
+    "queue": ">=4.4.2",
+    "multicast-dns-service-types": ">=1.1.0",
+    "dns-equal": ">=1.0.0",
+    "bonjour": ">=3.5.0",
+    "net": ">=1.0.2",
+    "tls": ">=0.0.1",
+    "crc-32": ">=1.2.0",
+    "node-forge": ">=0.7.5",
+    "url-search-params": ">=0.10.0"
+  }
+}
