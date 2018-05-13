@@ -1030,13 +1030,3 @@ function acquireBridgeAuthInfo(b, authQueryFields) {		// get authentication info
 	// all necessary info gathered from the user, back to try authorization again
 	return authInfo;
 }
-FLast]] = aPassword;
-		} else {		// if no (required) password, abandon this query
-			log.info(sep);
-			return false;
-		}
-	}
-	log.info(sep);
-	// all necessary info gathered from the user, back to try authorization again
-	return authInfo;
-}
