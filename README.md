@@ -16,8 +16,10 @@ FORM: The LutronPi application comprises two elements:
   1. A server application running under node.js on an independent computer (e.g. a Raspberry Pi, or a desktop,
   laptop, or potentially a NAS drive, etc.).  The server must be on the same local Ethernet subnet as the
   Lutron bridge(s) and the SmartThings hub.
+  See: https://github.com/billhinkle/lutronpi-server
   2. A SmartThings "SmartApp" service manager application, along with its associated device handlers. These
   Groovy modules all run on the SmartThings platform, with functions both local to the hub and in the cloud.
+  See: https://github.com/billhinkle/lutronpi-smartthings
 
 UPDATES: beyond the LutronPro 1.x package and its support of Lutron dimmers, switches and 3BRL Picos:
   * Connects to multiple Lutron bridges simultaneously, including:
