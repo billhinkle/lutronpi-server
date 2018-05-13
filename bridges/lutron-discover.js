@@ -67,11 +67,3 @@ function discover(discovery, logger, bridgeFoundCallback) {
 		mdnsFoundBridge = null;
 	}
 }
-geService.host, bridgeBrand);
-			return;
-		});
-	} else if (mdnsFoundBridge) {
-		mdnsFoundBridge.stop();
-		mdnsFoundBridge = null;
-	}
-}
