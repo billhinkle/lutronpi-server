@@ -1,10 +1,11 @@
 # lutronpi-server
-LutronPi server connecting Lutron bridges to SmartThings hub - Node.js
+LutronPi Server connecting Lutron bridges to SmartThings hub - Node.js
 
-LutronPi 2.x server is based on Nate Schwartz' LutronPro 1.x package for node.js and SmartThings
-Due to essential divergences, LutronPi server is not backwards compatible with Nate's earlier work,
-and will work only with the corresponding LutronPi device handlers and service manager running
-on the SmartThings platform (namespace: lutronpi)
+LutronPi 2.x Server is derived from Nate Schwartz' LutronPro 1.x package for Node.js and SmartThings.  
+Due to essential divergences, LutronPi Server is _not backwards compatible_ with Nate's earlier work,
+and will work _only_ with the corresponding LutronPi device handlers and service manager running
+on the SmartThings platform.  
+(See **FORM #2**, below.  This application's SmartThings namespace is: `lutronpi`)
 
 ### FUNCTION:
 The LutronPi application serves to connect Lutron lighting bridges (SmartBridge, SmartBridge Pro,
