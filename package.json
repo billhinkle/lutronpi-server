@@ -5,7 +5,7 @@
   "main": "lutronpi.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node app.js"
+    "start": "node lutronpi.js"
   },
   "keywords": [
     "Lutron",
@@ -24,6 +24,7 @@
   "engines": {
     "node": ">=6.11"
   },
+  "repository": "github:billhinkle/lutronpi-server",
   "files": [
     "LutronPiServer.js",
     "bridges/*",
