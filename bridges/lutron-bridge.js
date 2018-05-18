@@ -12,8 +12,12 @@
 // v 1.1.0  lutronpro (original)		nate schwartz (github njscwartz)  with ICS license
 // v 2.0.0+ lutronpi (forked)			wjh Bill hinkle (github billhinkle)
 // v 2.0.0	2018.05.10 1200Z			wjh  Bill Hinkle (github billhinkle)
-//	refactored into separate modules for supervisor, discovery, and bridge functions, so other bridge handlers can be plugged in
+//	refactored into separate modules for supervisor, discovery, and bridge functions
 //  see lutronpi.js supervisory module for additional/initial 2.0.0 revision list
+// v 2.0.0-beta.2	2018.05.18 0400Z	wjh  Bill Hinkle (github billhinkle)
+//					stretched request and response timeouts;
+//					changed logger from module to per-bridge; const'd some constants
+//
 'use strict';
 module.exports = {
 	Bridge
@@ -21,8 +25,8 @@ module.exports = {
 
 // const assert = require('assert');
 
-const logBridge = require('loglevel');
-logBridge.setLevel('info')
+const log = require('loglevel');
+log.setLevel('info')
 
 const net = require('net');
 const tls = require('tls');
@@ -99,9 +103,9 @@ const LB_TELNET_RETRY_INTERVAL = 300000;
 const LB_PING_INTERVAL = 90000;
 const LB_POLL_INTERVAL = 290000;
 
-var PICO_HELD_TIMEOUT = 6050; //milliseconds
-var PICO_PUSH_TIME_DEFAULT = 300;
-var PICO_REPEAT_TIME_DEFAULT = 750;
+const PICO_HELD_TIMEOUT = 6050; //milliseconds
+const PICO_PUSH_TIME_DEFAULT = 300;
+const PICO_REPEAT_TIME_DEFAULT = 750;
 var picoActive = {}; // list object of active picos keyed by pico ID
 var picoEvents = new eventEmitter();
 
@@ -133,7 +137,9 @@ Object.values = Object.values || (obj => Object.keys(obj).map(key => obj[key]));
 // --- end Polyfills
 
 // match Lutron LIP to LEAP devices and inject LIP device IDs into LEAP device list
-function parseLip2Leap(lipData, leapData) {
+function parseLip2Leap(lipData, leapData, logger) {
+	if (!logger)
+		var logger = log;
 	var lipComplete = [];
 	// Make the Devices (Picos... shades too?) and Zones (Lighting) objects a single array
 	for (var i = 0; i < lipData.Devices.length; i++) {
@@ -148,33 +154,33 @@ function parseLip2Leap(lipData, leapData) {
 	var idUnmatched = lipComplete.length;
 	// Add the LIP ID to the LEAP data, matching by device name and area, if available
 	for (var i in lipComplete) {
-		logBridge.debug("Matching LIP: ", lipComplete[i].Name);
+		logger.debug("Matching LIP: ", lipComplete[i].Name);
 		for (var j in leapData) {
-			logBridge.trace(leapData[j].Name);
+			logger.trace(leapData[j].Name);
 			if (leapData[j].ID === undefined &&
 				lipComplete[i].Name == leapData[j].Name &&
 				(lipComplete[i].Area === undefined ||
 					(leapData[j].FullyQualifiedName.length > 1 &&
 						lipComplete[i].Area.Name == leapData[j].FullyQualifiedName[0]))) {
 
-				logBridge.debug("Matched LEAP name to LIP ID: ", lipComplete[i].ID);
+				logger.debug("Matched LEAP name to LIP ID: ", lipComplete[i].ID);
 				leapData[j]["ID"] = lipComplete[i].ID;
 				idUnmatched--;
 				if (leapData[j].ID != Number(leapData[j].href.replace(/\/device\//i, ''))) { // '/device/xxx'
-					logBridge.debug("Device %s ID mismatch", leapData[j].FullyQualifiedName);
+					logger.debug("Device %s ID mismatch", leapData[j].FullyQualifiedName);
 					idMismatches++;
 				}
 			}
 		}
-		logBridge.trace(leapData);
+		logger.trace(leapData);
 	}
 	// Check if there is a discrepancy between LEAP and LIP ID's and notify the user if there is
 	if (idUnmatched)
-		logBridge.info(
+		logger.info(
 			"%d devices from LIP server do not match anything from LEAP server! This might cause problems for you.",
 			idUnmatched);
 	if (idMismatches)
-		logBridge.info(
+		logger.info(
 			"%d device ID(s) for LEAP and LIP servers do not match! This might cause problems for you.",
 			idMismatches);
 }
@@ -185,6 +191,8 @@ function PicoActive(picoBridge, picoDevice, picoButtonNumber, picoButtonForceRel
 	this.bridge = picoBridge;
 	this._picoDevice = picoDevice;
 	this._picoButtonNumber = picoButtonNumber;
+
+	this._logger = picoBridge._logger;
 
 	this.forceRelease = picoButtonForceRelease;
 	this.pushTime = picoPushTime;
@@ -267,7 +275,9 @@ function Bridge( lbridgeix, lbridgeid, lbridgeip, sendHubJSON, sentHubEvents ) {
 	this.bridgeIP = lbridgeip;
 	this.initialized = false;
 
-	this._sendHubJSON = (typeof sendHubJSON === 'function') ? sendHubJSON : function() {logBridge.warn('No ST hub comm function assigned!');};
+	this._logger = log.getLogger(lbridgeid);
+
+	this._sendHubJSON = (typeof sendHubJSON === 'function') ? sendHubJSON : function() {this._logger.warn('No ST hub comm function assigned!');};
     this._sentHubEvents = sentHubEvents ? sentHubEvents : null;	// listen to 'sheSent' to eavesdrop on all unsolicitied bridge events sent to ST hub
 
 	this._authorizer = null;
@@ -312,11 +322,13 @@ function Bridge( lbridgeix, lbridgeid, lbridgeip, sendHubJSON, sentHubEvents ) {
 	this._updatedScenes = false;
 
 	this._bridgeEvents = new eventEmitter();
+
+
 	/*
 	// just an example of eavesdropping on unsolicited bridge events sent to SmartThings
 	if (this._sentHubEvents)
 		this._sentHubEvents.on('sheSent', function stechotest(jsonData) {
-			logBridge.info('ST echo: %o', jsonData);
+			this._logger.info('ST echo: %o', jsonData);
 		}.bind(this));
 	*/
 
@@ -332,14 +344,14 @@ function Bridge( lbridgeix, lbridgeid, lbridgeip, sendHubJSON, sentHubEvents ) {
 
 	// set option higher-detail logging per CLI optiosn trace/debug
 	if (this._options.trace) {
-		logBridge.setLevel('trace');
+		this._logger.setLevel('trace');
 	} else if (this._options.debug) {
-		logBridge.setLevel('debug');
+		this._logger.setLevel('debug');
 	}
 
-	logBridge.info('%s Bridge %s at %s created: #%d', this.bridgeBrand, this.bridgeID, this.bridgeIP, this.bridgeIX);
+	this._logger.info('%s Bridge %s at %s created: #%d', this.bridgeBrand, this.bridgeID, this.bridgeIP, this.bridgeIX);
 	if (Object.keys(this._options).length)
-		logBridge.info('Bridge options: %o', this._options);
+		this._logger.info('Bridge options: %o', this._options);
 }
 Bridge.prototype._expectResponse = function(expectedresponseincr) {
 	// track the minimum number of bridge responses expected and try to reconnect on failure
@@ -347,7 +359,7 @@ Bridge.prototype._expectResponse = function(expectedresponseincr) {
 	//		not passed/undefined = return pending minimum response count
 	//		false/0 = reset and disable expected response monitor
 	//		+/-N = add or subtract N from pending minimum response count
-	logBridge.trace("expectedResponseCnt = %d, expectedresponseincr = %d",this._expectedResponseCnt,expectedresponseincr);
+	this._logger.trace("expectedResponseCnt = %d, expectedresponseincr = %d",this._expectedResponseCnt,expectedresponseincr);
 
 	if (expectedresponseincr !== undefined) {
 		if (expectedresponseincr && expectedresponseincr > 0) {
@@ -355,7 +367,7 @@ Bridge.prototype._expectResponse = function(expectedresponseincr) {
 			if (this._timerResponse != null)
 				clearTimeout(this._timerResponse);
 			this._timerResponse = setTimeout(function lbResponseTimeout() {
-				logBridge.error('Lutron Bridge %s #%d isn\'t responding [%d]', this.bridgeID, this.bridgeIX,
+				this._logger.error('Lutron Bridge %s #%d isn\'t responding [%d]', this.bridgeID, this.bridgeIX,
 					this._expectedResponseCnt);
 				this._reconnect(true, LB_RECONNECT_DELAY_SHORT);
 			}.bind(this), LB_RESPONSE_TIMEOUT);
@@ -427,15 +439,15 @@ Bridge.prototype._connectSSL = function(resume, cbonconnect) {	// returns error 
 		this._sslSession = null;
 	}
 	this._sslClient = tls.connect(8081, this.bridgeIP, options, function lbConnected() {
-		logBridge.info("Lutron Bridge %s SSL %sconnected at " + (new Date()), this.bridgeID, (resume) ? "re-" : "");
+		this._logger.info("Lutron Bridge %s SSL %sconnected at " + (new Date()), this.bridgeID, (resume) ? "re-" : "");
 
 		this._sslClient.on('end', function() {
-			logBridge.warn("Lutron Bridge %s disconnected itself", this.bridgeID);
+			this._logger.warn("Lutron Bridge %s disconnected itself", this.bridgeID);
 			// session is resumable if no error, so let it go for now
 		}.bind(this));
 
 		this._sslClient.on('close', function(erred) {
-			logBridge.info("Lutron Bridge %s comm closed %s", this.bridgeID, (erred) ? "with error" : "normally");
+			this._logger.info("Lutron Bridge %s comm closed %s", this.bridgeID, (erred) ? "with error" : "normally");
 			// session is resumable if no error, so let it go for now
 		}.bind(this));
 
@@ -467,7 +479,7 @@ Bridge.prototype._reconnect = function(attemptresume, backoffms) {
 	// wait a bit before trying to reconnect to the bridge
 	this._timerBackoff = setTimeout(function() {
 		this._timerBackoff = null;
-		logBridge.info("Lutron Bridge %s reconnecting...     ", this.bridgeID);
+		this._logger.info("Lutron Bridge %s reconnecting...     ", this.bridgeID);
 		this._connectSSL(attemptresume, function lbReconnected(resumed) {
 			if (!resumed || (this._telnetClient !== null && !this._telnetClient.destroyed)) {
 				this._telnetIsConnect = false;
@@ -481,7 +493,7 @@ Bridge.prototype._reconnect = function(attemptresume, backoffms) {
 }
 Bridge.prototype._setErrorHandlerSSL = function() {
 	this._sslClient.on('error', function errorHandlerSSL(err) {
-		logBridge.error('Lutron Bridge %s SSL comm error %s %s', this.bridgeID, err.code, err);
+		this._logger.error('Lutron Bridge %s SSL comm error %s %s', this.bridgeID, err.code, err);
 		if (err.code === 'ETIMEDOUT' || err.code === 'EHOSTUNREACH') {
 			// ... back off and retry connection
 			var backoffms = (this._reconnectTries + 1) * LB_RECONNECT_DELAY_LONG;
@@ -511,7 +523,7 @@ Bridge.prototype._setErrorHandlerSSL = function() {
 			// if it's a bad certificate, just informational
 			if (err.message.indexOf('bad certificate') != -1 ||
 				err.message.indexOf('SSL alert number 42') != -1) {
-				logBridge.warn('Lutron Bridge %s #%d refused this authentication!', this.bridgeID, this.bridgeIP);
+				this._logger.warn('Lutron Bridge %s #%d refused this authentication!', this.bridgeID, this.bridgeIP);
 				return;
 			}
 			// otherwise let it go for now, maybe it's ok
@@ -529,24 +541,24 @@ Bridge.prototype._writeSSL = function(data) {
 }
 Bridge.prototype._listenSSL = function(msgcallback) {
 	this._sslClient.on('data', function lbIncomingData(data) {
-		logBridge.trace('data in listenSSL:',data);
+		this._logger.trace('data in listenSSL:',data);
 		this._sslBufferedData += data;
 		try {
 			var bufferedString = this._sslBufferedData.toString().trim();
 			JSON.parse(bufferedString);
 			var digest = (crc32.str(bufferedString) >>> 0).toString(16);
 
-			logBridge.trace('Buffered data is proper JSON');
-			logBridge.trace(bufferedString);
+			this._logger.trace('Buffered data is proper JSON');
+			this._logger.trace(bufferedString);
 
 			this._sslBufferedData = '';
 		} catch (e) {
 			if (e instanceof SyntaxError &&
 			   (e.message.startsWith('Unexpected end of JSON input') || e.message.startsWith('Unexpected token'))) {
-				logBridge.debug('.'); // ('json not valid, probably don\'t have it all yet');
+				this._logger.debug('.'); // ('json not valid, probably don\'t have it all yet');
 			}
 			else {
-				logBridge.error("Exception at SSL listener, Error: ", e);
+				this._logger.error("Exception at SSL listener, Error: ", e);
 				throw (e);
 			}
 			return;
@@ -566,13 +578,13 @@ Bridge.prototype._handleIncomingSSLData = function (msgStringData, digest) {
 		return;
 	}
 
-	logBridge.debug('Incoming SSL is proper JSON; len=%d digest=%s', msgStringData.length,	digest);
+	this._logger.debug('Incoming SSL is proper JSON; len=%d digest=%s', msgStringData.length,	digest);
 
 	if (jsonData.Header.MessageBodyType == 'MultipleServerDefinition') { // Bridge server list received
 		this._expectResponse(-1);
 
-		logBridge.debug('Intra-bridge server list received');
-		logBridge.debug(msgStringData);
+		this._logger.debug('Intra-bridge server list received');
+		this._logger.debug(msgStringData);
 
 		this._pro = false;
 		var lipServer = jsonData.Body.Servers.find(function(s) {
@@ -580,16 +592,16 @@ Bridge.prototype._handleIncomingSSLData = function (msgStringData, digest) {
 		}.bind(this));
 		if (lipServer) {
 			if (this._options.nopro) { // pretend Pro bridge is Std, no LIP, no Telnet
-				logBridge.info('Lutron TEST Std Bridge %s', this.bridgeID);
+				this._logger.info('Lutron TEST Std Bridge %s', this.bridgeID);
 			}
 			else {
-				logBridge.info('Lutron Pro/RA+ Bridge %s', this.bridgeID);
+				this._logger.info('Lutron Pro/RA+ Bridge %s', this.bridgeID);
 				if (lipServer.EnableState == 'Enabled') {
 					this._pro = true;
 					this._lipServerIDHref = lipServer.LIPProperties.Ids.href;
 				}
 				else {
-					logBridge.warn('Lutron Bridge %s: app Settings/Advanced/Integration/Telnet is turned off!', this.bridgeID);
+					this._logger.warn('Lutron Bridge %s: app Settings/Advanced/Integration/Telnet is turned off!', this.bridgeID);
 					this._writeSSL(
 						communiqueBridgeServerEnable1of3 +  lipServer.href +
 						communiqueBridgeServerEnable2of3 +  lipServer.href +
@@ -601,9 +613,10 @@ Bridge.prototype._handleIncomingSSLData = function (msgStringData, digest) {
 			}
 		}
 		else
-			logBridge.info('Lutron Std Bridge %s', this.bridgeID);
+			this._logger.info('Lutron Std Bridge %s', this.bridgeID);
 
-		// now request the LEAP device list
+		// now request and await the LEAP device list
+		this._logger.info('Lutron Bridge %s LEAP request', this.bridgeID);
 		this._writeSSL(communiqueBridgeDevicesRequest);
 		this._expectResponse(1);
 		return;
@@ -614,30 +627,31 @@ Bridge.prototype._handleIncomingSSLData = function (msgStringData, digest) {
 		if (!aServer)
 			return;
 
-		logBridge.debug('Bridge %s server list received', aServer.Type);
-		logBridge.debug(msgStringData);
+		this._logger.debug('Bridge %s server list received', aServer.Type);
+		this._logger.debug(msgStringData);
 
 		if (aServer.Type == 'LIP' && aServer.EnableState == 'Enabled') {
 			this._pro = true;
 			this._lipServerIDHref = aServer.LIPProperties.Ids.href;
-			logBridge.info('Lutron Std Bridge %s', this.bridgeID);
-			logBridge.warn('Lutron Bridge %s: app Settings/Advanced/Integration/Telnet has been turned on!', this.bridgeID);
+			this._logger.info('Lutron Std Bridge %s', this.bridgeID);
+			this._logger.warn('Lutron Bridge %s: app Settings/Advanced/Integration/Telnet has been turned on!', this.bridgeID);
 		}
 
-		// now request the LEAP device list
+		// now request and await the LEAP device list
+		this._logger.info('Lutron Bridge %s LEAP request', this.bridgeID);
 		this._writeSSL(communiqueBridgeDevicesRequest);
 		this._expectResponse(1);
 		return;
 	}
 	else if (jsonData.Header.MessageBodyType == 'MultipleDeviceDefinition') { // LEAP device list received
 		this._expectResponse(-1);
-		logBridge.debug('LEAP Data was received ' +
+		this._logger.debug('LEAP Data was received ' +
 					    (this._expectPollDevices ? 'for poll' : 'and sent to parser'));
 
 		if (digest != this._digestLeap) {
 			this._digestLeap = digest;
 			this._updatedDevices = true;
-			logBridge.info('Lutron Bridge %s Devices (LEAP) data has changed since last request', this.bridgeID);
+			this._logger.info('Lutron Bridge %s Devices (LEAP) data has changed since last request', this.bridgeID);
 		}
 
 		if (this._expectPollDevices) {
@@ -647,7 +661,7 @@ Bridge.prototype._handleIncomingSSLData = function (msgStringData, digest) {
 		else
 			this._pollBridge(); // reset the next poll out from this response
 
-		logBridge.debug(msgStringData);
+		this._logger.debug(msgStringData);
 
 		this._allDevices = jsonData.Body.Devices;
 
@@ -685,17 +699,20 @@ Bridge.prototype._handleIncomingSSLData = function (msgStringData, digest) {
 					'Shade');
 			}
 		}
-		logBridge.info('Lutron Bridge %s Zone info :\n%o\n', this.bridgeID, this._zoneList);
+		this._logger.info('Lutron Bridge %s Zone info :\n%o\n', this.bridgeID, this._zoneList);
 
 		if (this._pro) {
 			// request the LIP device data, only available on the Pro and RA2 Select bridges
+			this._logger.info('Lutron Bridge %s LIP request', this.bridgeID);
 			this._writeSSL(communiqueBridgeLIPDevicesRequest1of2 + this._lipServerIDHref +
 				communiqueBridgeLIPDevicesRequest2of2);
 			this._expectResponse(1);
 		}
 		else { // we've got all the device info available; obtain button details before we tell the listener(s)
-			logBridge.info('Lutron Bridge %s LEAP Device info:\n%o\n', this.bridgeID, this._allDevices);
+			this._logger.info('Lutron Bridge %s LEAP Device info:\n%o\n', this.bridgeID, this._allDevices);
 
+			// now request and await the button groups list
+			this._logger.info('Lutron Bridge %s button groups request', this.bridgeID);
 			this._writeSSL(communiqueBridgeButtonGroupsRequest);
 			this._expectResponse(1);
 		}
@@ -703,21 +720,23 @@ Bridge.prototype._handleIncomingSSLData = function (msgStringData, digest) {
 	}
 	else if (jsonData.Header.MessageBodyType == 'OneLIPIdListDefinition') { // LIP device list received
 		this._expectResponse(-1);
-		logBridge.debug('LIP Data was received and sent to parser');
-		logBridge.debug(msgStringData);
+		this._logger.debug('LIP Data was received and sent to parser');
+		this._logger.debug(msgStringData);
 
 		// update LEAP data w/ LIP IDs in-place - no need to retain LIP list
-		parseLip2Leap(jsonData.Body.LIPIdList, this._allDevices);
-		logBridge.info('Lutron Bridge %s merged LEAP/LIP Device info:\n%o\n', this.bridgeID, this._allDevices);
+		parseLip2Leap(jsonData.Body.LIPIdList, this._allDevices, this._logger);
+		this._logger.info('Lutron Bridge %s merged LEAP/LIP Device info:\n%o\n', this.bridgeID, this._allDevices);
 
+		// now request and await the button groups list
+		this._logger.info('Lutron Bridge %s button groups request', this.bridgeID);
 		this._writeSSL(communiqueBridgeButtonGroupsRequest);
 		this._expectResponse(1);
 	}
 	else if (jsonData.Header.MessageBodyType == 'MultipleButtonGroupDefinition') {
 		this._expectResponse(-1);
-		logBridge.debug('Button Group Data was received and sent to parser');
+		this._logger.debug('Button Group Data was received and sent to parser');
 
-		logBridge.debug(msgStringData);
+		this._logger.debug(msgStringData);
 
 		var bgroups = jsonData.Body.ButtonGroups;
 		for (var i = 0; i < bgroups.length; i++) {
@@ -741,15 +760,17 @@ Bridge.prototype._handleIncomingSSLData = function (msgStringData, digest) {
 				// "SortOrder":0,"StopIfMoving":"Disabled","Category":{"Type":"Lights"},"ProgrammingType":"Column"
 			}
 		}
+		// now request and await the button definitions list
+		this._logger.info('Lutron Bridge %s button definitions request', this.bridgeID);
 		this._writeSSL(communiqueBridgeButtonsRequest); // now get the specific buttons info
 		this._expectResponse(1);
 		return;
 	}
 	else if (jsonData.Header.MessageBodyType == 'MultipleButtonDefinition') {
 		this._expectResponse(-1);
-		logBridge.debug('Button Data was received and sent to parser');
+		this._logger.debug('Button Data was received and sent to parser');
 
-		logBridge.debug(msgStringData);
+		this._logger.debug(msgStringData);
 
 		var buttons = jsonData.Body.Buttons;
 		for (var i = 0; i < buttons.length; i++) {
@@ -766,15 +787,17 @@ Bridge.prototype._handleIncomingSSLData = function (msgStringData, digest) {
 				aPico.leapBProgModels[bNumber] = Number(buttons[i].ProgrammingModel.href.replace(/\/programmingmodel\//i, ''));
 
 				// now get each button's specific press-vs-hold permissions
+				// now request and await the button groups list
+				this._logger.debug('Lutron Bridge %s programming model %d request', this.bridgeID, aPico.leapBProgModels[bNumber]);
 				this._writeSSL(communiqueBridgeButtonProgrammingModelRequest1of2 +
-					aPico.leapBProgModels[bNumber] +
-					communiqueBridgeButtonProgrammingModelRequest2of2);
+				               aPico.leapBProgModels[bNumber] +
+				               communiqueBridgeButtonProgrammingModelRequest2of2);
 				this._expectResponse(1);
 			}
 		}
 		// update the buttons table from SmartThings device handlers to add LIP button number (2-6, 8-11) and press/hold mode
 
-		logBridge.info('Lutron Bridge %s Pico info:\n%o\n', this.bridgeID, this._picoList);
+		this._logger.info('Lutron Bridge %s Pico info:\n%o\n', this.bridgeID, this._picoList);
 		this._bridgeEvents.emit(BE_GOTBUTTONGROUPS, this.bridgeIX);
 		this._bridgeEvents.emit(BE_GOTDEVICES, this.bridgeIX, this._updatedDevices); // we've got all the device info available; tell the listener(s)
 
@@ -784,9 +807,9 @@ Bridge.prototype._handleIncomingSSLData = function (msgStringData, digest) {
 	}
 	else if (jsonData.Header.MessageBodyType == 'OneProgrammingModelDefinition') {
 		this._expectResponse(-1);
-		logBridge.debug('Button programming Model Data was received and sent to parser');
+		this._logger.debug('Button programming model Data was received and sent to parser');
 
-		logBridge.debug(msgStringData);
+		this._logger.debug(msgStringData);
 
 		var aPico = this._picoList[Object.keys(this._picoList).find(function(k) {
 				return (undefined != this._picoList[k].leapBProgModels.find(function(lBPM) {
@@ -799,27 +822,27 @@ Bridge.prototype._handleIncomingSSLData = function (msgStringData, digest) {
 			}.bind(this));
 			aPico.leapBPressAndHoldOK[bNumber] =
 				(jsonData.Body.ProgrammingModel.ProgrammingModelType !=	'SingleActionProgrammingModel');
-			logBridge.debug('ProgModel %d for bNumber %d is %s', aPico.leapBProgModels[
+			this._logger.debug('ProgModel %d for bNumber %d is %s', aPico.leapBProgModels[
 				bNumber], bNumber, jsonData.Body.ProgrammingModel.ProgrammingModelType);
 		}
 		return;
 	}
 	else if (jsonData.Header.MessageBodyType == 'MultipleVirtualButtonDefinition') {
 		this._expectResponse(-1);
-		logBridge.debug('Scenes Data was received ' +
+		this._logger.debug('Scenes Data was received ' +
 						(this._expectPollScenes ? 'for poll' : 'and sent to parser'));
 
 		if (digest != this._digestScenes) {
 			this._digestScenes = digest;
 			this._updatedScenes = true;
-			logBridge.info('Lutron Bridge %s Scene data has changed since last request', this.bridgeID);
+			this._logger.info('Lutron Bridge %s Scene data has changed since last request', this.bridgeID);
 		}
 
 		if (this._expectPollScenes) {
 			this._expectPollScenes = false;
 			return; // don't update our internal map of the scenes, just note its digest hash
 		}
-		logBridge.debug(msgStringData);
+		this._logger.debug(msgStringData);
 
 		var buttons = jsonData.Body.VirtualButtons;
 		var tempList = [];
@@ -833,7 +856,7 @@ Bridge.prototype._handleIncomingSSLData = function (msgStringData, digest) {
 			}
 		}
 		this._allScenes = tempList;
-		logBridge.info('Lutron Bridge %s Scene info:\n%o\n', this.bridgeID, this._allScenes);
+		this._logger.info('Lutron Bridge %s Scene info:\n%o\n', this.bridgeID, this._allScenes);
 
 		this._bridgeEvents.emit(BE_GOTSCENES, this.bridgeIX, this._updatedScenes);
 		if (this._dReqSceneListCallback.length)
@@ -843,9 +866,9 @@ Bridge.prototype._handleIncomingSSLData = function (msgStringData, digest) {
 	else if (jsonData.Header.MessageBodyType == 'OneZoneStatus') {
 		jsonData.Header.Bridge = this.bridgeID;
 		var aZone = jsonData.Body.ZoneStatus.Zone.href.replace(/\/zone\//i, '');
-		logBridge.info('Zone Status Received, Lutron Bridge %s Zone %d to %d\%',this.bridgeID,
+		this._logger.info('Zone Status Received, Lutron Bridge %s Zone %d to %d\%',this.bridgeID,
 		               aZone,jsonData.Body.ZoneStatus.Level);
-		logBridge.debug(msgStringData);
+		this._logger.debug(msgStringData);
 
 		var levelRequested = (jsonData.Header.Url == (jsonData.Body.ZoneStatus.Zone.href + '\/status') ||
 		                      jsonData.Header.Url == (jsonData.Body.ZoneStatus.Zone.href + '\/commandprocessor')); // + '/level' if not requested
@@ -854,14 +877,14 @@ Bridge.prototype._handleIncomingSSLData = function (msgStringData, digest) {
 
 		var eventZLName = eventZoneLevel(this.bridgeID, aZone);
 		if (this._bridgeEvents.listenerCount(eventZLName)) {
-			logBridge.info('Refresh Lutron %s Bridge %s Zone %d status sent to ST hub',
+			this._logger.info('Refresh Lutron %s Bridge %s Zone %d status sent to ST hub',
 						   (this._pro) ?	'Pro' : 'Std', this.bridgeID, aZone);
 			this._bridgeEvents.emit(eventZLName, jsonData);
 			return;
 		}
 
 		if ((levelRequested || !this._telnetIsConnect)) {
-			logBridge.info('Lutron %s Bridge %s Zone %d status sent to ST hub',
+			this._logger.info('Lutron %s Bridge %s Zone %d status sent to ST hub',
 						   (this._pro) ? 'Pro' : 'Std', this.bridgeID, aZone);
 			this._sendHubJSON(jsonData); // unsolicited zone level updates from Pro bridge handled via Telnet
 		}
@@ -869,19 +892,19 @@ Bridge.prototype._handleIncomingSSLData = function (msgStringData, digest) {
 	}
 	else if (jsonData.Header.StatusCode == '204 NoContent' ||
 	         jsonData.Header.StatusCode == '201 Created') { // probably a command acknowledgement
-		logBridge.debug(msgStringData);
+		this._logger.debug(msgStringData);
 		this._expectResponse(-1);
 		return;
 	}
 	else if (jsonData.CommuniqueType == 'ExceptionResponse') { // some kind of bad command to Lutron: report it
-		logBridge.error('Lutron Comm Error: %o', jsonData);
-		logBridge.debug(msgStringData);
+		this._logger.error('Lutron Comm Error: %o', jsonData);
+		this._logger.debug(msgStringData);
 		this._expectResponse(0); // reset response expectations: who knows what's going on at thsi point?!
 		return;
 	}
 	else { // some other response; just note it for future reference
-		logBridge.warn('SSL data from Lutron %s Bridge %s ignored', (this._pro) ? "Pro" : "Std", this.bridgeID);
-		logBridge.warn(msgStringData);
+		this._logger.warn('SSL data from Lutron %s Bridge %s ignored', (this._pro) ? "Pro" : "Std", this.bridgeID);
+		this._logger.warn(msgStringData);
 		return;
 	}
 }
@@ -891,14 +914,14 @@ Bridge.prototype._pollBridge = function() {
 		clearInterval(this._intervalBridgePoll);
 	this._intervalBridgePoll = setInterval(function() {
 		if (!this._expectPollDevices) {
-			logBridge.debug('Lutron Bridge %s #%d devices poll', this.bridgeID, this.bridgeIX);
+			this._logger.debug('Lutron Bridge %s #%d devices poll', this.bridgeID, this.bridgeIX);
 			this._expectResponse(1);
 			this._expectPollDevices = true;
 			this._writeSSL(communiqueBridgeDevicesRequest);
 			// expected reply: LEAP devices
 		}
 		if (!this._expectPollScenes) {
-			logBridge.debug('Lutron Bridge %s #%d scenes poll', this.bridgeID, this.bridgeIX);
+			this._logger.debug('Lutron Bridge %s #%d scenes poll', this.bridgeID, this.bridgeIX);
 			this._expectResponse(1);
 			this._expectPollScenes = true;
 			this._writeSSL(communiqueBridgeScenesRequest);
@@ -908,7 +931,7 @@ Bridge.prototype._pollBridge = function() {
 }
 Bridge.prototype._initTelnet = function(telnetConnectCallback) {
 	if (!this._telnetIsConnect) {
-		logBridge.info('Starting Telnet connection to Lutron Bridge %s', this.bridgeID);
+		this._logger.info('Starting Telnet connection to Lutron Bridge %s', this.bridgeID);
 		this._telnetIsConnect = false;
 		if (this._telnetClient !== null && !this._telnetClient.destroyed)
 			this._telnetClient.destroy();
@@ -921,7 +944,7 @@ Bridge.prototype._telnetHandler = function(telnetConnectCallback) {
 		var msgline;
 		var message;
 
-		logBridge.trace('Lutron Bridge %s Telnet received: Bridge %s', this.bridgeID, data);
+		this._logger.trace('Lutron Bridge %s Telnet received: Bridge %s', this.bridgeID, data);
 		// we have to account for GNET> prompts embedded within responses, and multiple-line responses
 		message = data.toString();
 		if (message.indexOf('GNET>') !== -1) { // a prompt, but it might've been embedded so reprocess line also
@@ -944,7 +967,7 @@ Bridge.prototype._telnetHandler = function(telnetConnectCallback) {
 
 		for (var i = 0, mlcnt = msgline.length; i < mlcnt; i++) {
 			if (msgline[i].length)
-				logBridge.debug('Lutron Bridge %s Telnet received: %s', this.bridgeID, msgline[i]);
+				this._logger.debug('Lutron Bridge %s Telnet received: %s', this.bridgeID, msgline[i]);
 			if (msgline[i].indexOf('login') !== -1) {
 				this._telnetClient.write('lutron\r\n');
 			}
@@ -958,7 +981,7 @@ Bridge.prototype._telnetHandler = function(telnetConnectCallback) {
 				}
 				else
 					extUpdate = true;
-				logBridge.info('Lutron Bridge %s sent (%s) device update', this.bridgeID, extUpdate?'manual/app':'requested' );
+				this._logger.info('Lutron Bridge %s sent (%s) device update', this.bridgeID, extUpdate?'manual/app':'requested' );
 
 				message = msgline[i].split(',');
 
@@ -995,23 +1018,23 @@ Bridge.prototype._telnetHandler = function(telnetConnectCallback) {
 				var picoButtonNumber = message[2]; // if scene, this is the virtual button number
 				var picoButtonOp = message[3]; // this will be 3 for press, 4 for release
 
-				logBridge.info("Lutron Bridge %s, Device=%d, Button Code=%d Op=%d", this.bridgeID, picoDevice, picoButtonNumber, picoButtonOp);
+				this._logger.info("Lutron Bridge %s, Device=%d, Button Code=%d Op=%d", this.bridgeID, picoDevice, picoButtonNumber, picoButtonOp);
 
 				picoHandler.call(this, picoDevice, picoButtonNumber, picoButtonOp);
 
-				logBridge.trace("%s active Pico buttons",Object.keys(picoActive).length);
+				this._logger.trace("%s active Pico buttons",Object.keys(picoActive).length);
 
 				return;
 
 				function picoHandler(picoDevice, picoButtonNumber, picoButtonOp) {
 					var myPicoID = picoID(this.bridgeID, picoDevice, picoButtonNumber);
 					var picoMode = this._buttonMode(picoDevice, picoButtonNumber);
-					logBridge.trace('Pico button mode: %o', picoMode);
+					this._logger.trace('Pico button mode: %o', picoMode);
 
 					if (picoDevice > BUTTON_VIRTUAL_DEVICEN)
-						logBridge.info('Lutron Pico mode: %s', picoMode.rampHold ? 'push/repeat on hold' : 'push/hold');
+						this._logger.info('Lutron Pico mode: %s', picoMode.rampHold ? 'push/repeat on hold' : 'push/hold');
 					else
-						logBridge.info('Lutron Scene: Virtual button %d', picoButtonNumber);
+						this._logger.info('Lutron Scene: Virtual button %d', picoButtonNumber);
 
 					if (picoButtonOp == BUTTON_OP_PRESS) { // pressed
 						var curPicoActive;
@@ -1033,7 +1056,7 @@ Bridge.prototype._telnetHandler = function(telnetConnectCallback) {
 								nextPicoActive.timerQuash();
 								var elapsed = nextPicoActive.elapsed();
 								var textPushedHeld = (elapsed > nextPicoActive.pushTime) ? 'held' : 'pushed';
-								logBridge.info('%s button was %sreleased in %d ms (%s)', picoNextID,
+								this._logger.info('%s button was %sreleased in %d ms (%s)', picoNextID,
 									(forcedrelease) ? 'force-' : '', elapsed, textPushedHeld);
 								if (!nextPicoActive.wasRamped) {
 									var myJSONObject = nextPicoActive.reportOp(textPushedHeld);
@@ -1052,7 +1075,7 @@ Bridge.prototype._telnetHandler = function(telnetConnectCallback) {
 								}.bind(nextPicoActive), unelapsed);
 							}
 							else
-								logBridge.warn('unexpected button event: %s %d', picoNextID, picoButtonNextOp);
+								this._logger.warn('unexpected button event: %s %d', picoNextID, picoButtonNextOp);
 						}.bind(this));
 						var heldTimeout;
 						switch (curPicoActive.forceRelease) {
@@ -1079,10 +1102,10 @@ Bridge.prototype._telnetHandler = function(telnetConnectCallback) {
 						}
 						if (picoMode.rampHold) { // ramp hold: start repeating held beyond 'short' press time
 							curPicoActive.timerHeld = setTimeout(function() {
-								logBridge.info('short-push timeout');
+								this._logger.info('short-push timeout');
 								this.intervalRamp = setInterval(function() {
 									this.wasRamped = true;
-									logBridge.info('ramp interval');
+									this._logger.info('ramp interval');
 									var myJSONObject = this.reportOp('held');
 									this.bridge._sendHubJSON(myJSONObject);
 									return;
@@ -1104,7 +1127,7 @@ Bridge.prototype._telnetHandler = function(telnetConnectCallback) {
 	}.bind(this));
 
 	this._telnetClient.on('error', function errorHandlerTelnet(err) {
-		logBridge.error('Lutron Pro Bridge %s Telnet comm error %s %s', this.bridgeID, err.code, err);
+		this._logger.error('Lutron Pro Bridge %s Telnet comm error %s %s', this.bridgeID, err.code, err);
 		if (err.code === 'ETIMEDOUT' || err.code === 'EHOSTUNREACH' || err.code ===	'EPIPE') {
 			// ... back off and retry connection
 			var backoffms = (this._reconnectTries + 1) * LB_RECONNECT_DELAY_LONG;
@@ -1131,7 +1154,7 @@ Bridge.prototype._telnetHandler = function(telnetConnectCallback) {
 	this._telnetClient.on('close', function() {
 		this._telnetIsConnect = false;
 		this._telnetClient = null;
-		logBridge.error('Disconnected Telnet from Lutron Pro Bridge %s', this.bridgeID);
+		this._logger.error('Disconnected Telnet from Lutron Pro Bridge %s', this.bridgeID);
 		if (this._sslConnected()) {
 			// hand the pinging duties back to the SSL connection
 			this._setPingSSL();
@@ -1143,7 +1166,7 @@ Bridge.prototype._telnetHandler = function(telnetConnectCallback) {
 	}.bind(this));
 
 	this._telnetClient.on('connect', function() {
-		logBridge.info('Connected via Telnet to Lutron Pro Bridge %s', this.bridgeID);
+		this._logger.info('Lutron Bridge %s confirming Telnet', this.bridgeID);
 		// however, we aren't functionally connected until the first GNET> prompt
 	}.bind(this));
 
@@ -1157,7 +1180,7 @@ Bridge.prototype._telnetHandler = function(telnetConnectCallback) {
 			clearInterval(this._intervalTelnetRetryPending);
 			this._intervalTelnetRetryPending = null;
 		}
-		logBridge.info('Lutron Bridge %s Telnet Connected!', this.bridgeID);
+		this._logger.info('Lutron Bridge %s Telnet Connected!', this.bridgeID);
 
 		// change the ping scheme to use Telnet instead of SSL for the Pro bridge
 		if (this._intervalPing)
@@ -1166,7 +1189,7 @@ Bridge.prototype._telnetHandler = function(telnetConnectCallback) {
 		this._intervalPing = setInterval(function() {
 			if (this._telnetIsConnect && !this._expectPingback) {
 				if (!this._expectResponse()) {
-					logBridge.trace('Ping Bridge %s', this.bridgeID);
+					this._logger.trace('Ping Bridge %s', this.bridgeID);
 					process.stdout.write('                        \rPing ' + this.bridgeID + '... ');
 					this._expectResponse(1);
 					this._expectPingback = true;
@@ -1282,18 +1305,18 @@ Bridge.prototype.initialize = function(authFunction, lbinitcallback) {	// lbinit
 	var autherr = this._connectSSL(false, function lbGetInitialBridgeConfig(resumed) {
 		this._sslErrorCallback = null;
 		this._reconnectTries = 0;
-		// request and await the initial devices list
-		logBridge.info('Lutron Bridge %s initial devices request', this.bridgeID);
+		// various requests to acquire the initial devices list and its ancillary data
+		this._logger.info('Lutron Bridge %s initial devices request', this.bridgeID);
 		var beIGDCbFn;
 		this._bridgeEvents.on(BE_GOTDEVICES, beIGDCbFn = function beInitGotDevices( gdbridgeix, gdbupdated) {
 			this._bridgeEvents.removeListener(BE_GOTDEVICES, beIGDCbFn);
-
+			// once we've got all the devices' info...
 			// request and await the initial scenes list
-			logBridge.info('Lutron Bridge %s initial scenes request', this.bridgeID);
+			this._logger.info('Lutron Bridge %s initial scenes request', this.bridgeID);
 			var beIGSCbFn;
 			this._bridgeEvents.on(BE_GOTSCENES, beIGSCbFn = function beInitGotScenes( gsbridgeix, gdbupdated) {
 				this._bridgeEvents.removeListener(BE_GOTSCENES, beIGSCbFn);
-
+				// once we've got the scenes list...
 				// wait until initial device list, initial level updates, initial scenes list before starting the Pro Bridge telnet client
 				if (this._pro)
 					this._initTelnet(bInitComplete.bind(this));
@@ -1309,6 +1332,8 @@ Bridge.prototype.initialize = function(authFunction, lbinitcallback) {	// lbinit
 			this._writeSSL(communiqueBridgeScenesRequest);
 			this._expectResponse(1);
 		}.bind(this));
+		// request and await the initial intra-bridge servers list
+		this._logger.info('Lutron Bridge %s initial intra-bridge servers request', this.bridgeID);
 		this._writeSSL(communiqueBridgeServersRequest); // first find out what servers the bridge offers
 		this._expectResponse(1);
 	}.bind(this));
@@ -1318,7 +1343,7 @@ Bridge.prototype.initialize = function(authFunction, lbinitcallback) {	// lbinit
 }
 Bridge.prototype.updateBridgeComm = function(lbridgeip) {
 	if (lbridgeip) {
-		logBridge.info('Lutron Bridge %s changed to IP=%s; reconnecting in %d seconds',
+		this._logger.info('Lutron Bridge %s changed to IP=%s; reconnecting in %d seconds',
 		                this.bridgeID, lbridgeip, LB_RECONNECT_DELAY_RESET / 1000);
 		this.bridgeIP = lbridgeip;
 		this._reconnectTries = 0;
@@ -1386,7 +1411,7 @@ Bridge.prototype.deviceListRequest = function(dReqDeviceListIX, dReqDeviceListRe
 		return;
 	}.bind(this);
 	timerGetDeviceList = setTimeout(function() {
-		logBridge.warn('Lutron Bridge %s device list request timeout!', this.bridgeID);
+		this._logger.warn('Lutron Bridge %s device list request timeout!', this.bridgeID);
 		this._dReqDeviceListCallback.splice(this._dReqDeviceListCallback.indexOf(handlerGetDeviceList),1);
 		handlerGetDeviceList(dReqDeviceListIX);
 		return;
@@ -1412,7 +1437,7 @@ Bridge.prototype.sceneListRequest = function(dReqSceneListIX, dReqSceneListReset
 		return;
 	}.bind(this);
 	timerGetSceneList = setTimeout(function() {
-		logBridge.warn('Lutron Bridge %s scene list request timeout!', this.bridgeID);
+		this._logger.warn('Lutron Bridge %s scene list request timeout!', this.bridgeID);
 		this._dReqSceneListCallback.splice(this._dReqSceneListCallback.indexOf(handlerGetSceneList),1);
 		handlerGetSceneList(dReqSceneListIX);
 		return;
@@ -1619,7 +1644,7 @@ Bridge.prototype.buttonRemoteAction = function(deviceSN, buttonNumber, action, c
 				try {
 					leapButtonIndex = this._picoList[deviceSN].buttons[buttonNumber].leapBIX;
 				} catch (e) {
-					logBridge.warn('Pico mode never received from SmartThings!');
+					this._logger.warn('Pico mode never received from SmartThings!');
 				}
 				// with a standard bridge, we have to echo back the app buttons  here, as the bridge won't
 				if (!this._pro || leapButtonIndex < 0) {
@@ -1693,7 +1718,7 @@ Bridge.prototype.buttonRemoteSetMode = function(deviceSN, picoModeMap, picoPushT
 		aPico.pushTime = (picoPushTime ? picoPushTime : PICO_PUSH_TIME_DEFAULT);
 		aPico.repeatTime = (picoRepeatTime ? picoRepeatTime : PICO_REPEAT_TIME_DEFAULT);
 
-		logBridge.debug('Pico %s = %o', deviceSN, aPico);
+		this._logger.debug('Pico %s = %o', deviceSN, aPico);
 
 		error = 0; // accepted
 	}
