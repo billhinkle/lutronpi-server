@@ -14,6 +14,8 @@
 // v 2.0.0	2018.05.10 1200Z			wjh  Bill Hinkle (github billhinkle)
 //	refactored into separate modules for supervisor, discovery, and bridge functions, so other bridge handlers can be plugged in
 //  see lutronpi.js supervisory module for additional/initial 2.0.0 revision list
+// v 2.0.0-beta.2	2018.05.18 0400Z	wjh  Bill Hinkle (github billhinkle)
+//					stretched request and response timeouts
 'use strict';
 module.exports = {
 	Bridge
@@ -88,8 +90,8 @@ const communiqueBridgePicoButtonActionPressAndRelease3of3 =
 const communiqueBridgePicoButtonActionPressAndHold3of3 = '"PressAndHold"}}}\n';
 const communiqueBridgePicoButtonActionRelease3of3 = '"Release"}}}\n';
 
-const LB_REQUEST_TIMEOUT = 1500;
-const LB_RESPONSE_TIMEOUT = 3000;
+const LB_REQUEST_TIMEOUT = 5000; // was 1500;
+const LB_RESPONSE_TIMEOUT = 20000;	// was 3000;
 const LB_RECONNECT_DELAY_RESET = 30000;
 const LB_RECONNECT_DELAY_AUTHFAIL = 15000;
 const LB_RECONNECT_DELAY_NORMMAX = 75000;
