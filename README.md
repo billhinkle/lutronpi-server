@@ -32,11 +32,11 @@ The LutronPi application comprises two elements:
   * Make a directory/folder for LutronPi Server; e.g. `mkdir lutronpi`
   * Copy the contents of the lutronpi-server GitHub repository 
     https://github.com/billhinkle/lutronpi-server
-	into that directory/folder, with all files and the subdirectory structure (`bridges/` and `lib/`).
-	You may download the repository as a ZIP file and extract it within that directory, or use 
-	`git clone https://github.com/billhinkle/lutronpi-server`
-	or copy the files and create the subdirectories manually, or any other method you prefer.
-  * From within that directory (e.g. `cd lutronpi` first), run  
+	into that directory/folder, with all files and the subdirectory structure (`bridges/` and `lib/`).  
+	You may download the repository as a ZIP file and extract it within that directory, or use  
+	`git clone https://github.com/billhinkle/lutronpi-server lutronpi`  
+	or create the subdirectories and copy the files manually, or any other method you prefer.
+  * From within that directory (i.e. `cd lutronpi` first), run  
     `npm install lutronpi`  
 	This command to the Node Package Manager (npm) will download and install the necessary Node.js
 	modules for LutronPi Server, into a `node_modules` subdirectory.  If you have some more elaborate
