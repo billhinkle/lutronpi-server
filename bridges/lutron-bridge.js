@@ -92,8 +92,8 @@ const communiqueBridgePicoButtonActionPressAndRelease3of3 =
 const communiqueBridgePicoButtonActionPressAndHold3of3 = '"PressAndHold"}}}\n';
 const communiqueBridgePicoButtonActionRelease3of3 = '"Release"}}}\n';
 
-const LB_REQUEST_TIMEOUT = 1500;
-const LB_RESPONSE_TIMEOUT = 3000;
+const LB_REQUEST_TIMEOUT = 5000;	// was 1500
+const LB_RESPONSE_TIMEOUT = 20000;	// was 3000
 const LB_RECONNECT_DELAY_RESET = 30000;
 const LB_RECONNECT_DELAY_AUTHFAIL = 15000;
 const LB_RECONNECT_DELAY_NORMMAX = 75000;
