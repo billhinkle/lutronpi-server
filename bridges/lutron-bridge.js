@@ -17,6 +17,8 @@
 // v 2.0.0-beta.2	2018.05.18 0400Z	wjh  Bill Hinkle (github billhinkle)
 //					stretched request and response timeouts;
 //					changed logger from module to per-bridge; const'd some constants
+// v 2.0.0-beta.3	2018.07.13 2030Z	wjh  Bill Hinkle (github billhinkle)
+//					corrected handling of null telnet connection upon bridge SSL reconnect
 //
 'use strict';
 module.exports = {
@@ -481,11 +483,10 @@ Bridge.prototype._reconnect = function(attemptresume, backoffms) {
 		this._timerBackoff = null;
 		this._logger.info("Lutron Bridge %s reconnecting...     ", this.bridgeID);
 		this._connectSSL(attemptresume, function lbReconnected(resumed) {
-			if (!resumed || (this._telnetClient !== null && !this._telnetClient.destroyed)) {
-				this._telnetIsConnect = false;
+			if (this._telnetClient !== null)
 				this._telnetClient.destroy();
-				this._telnetClient = null;
-			}
+			this._telnetIsConnect = false;
+			this._telnetClient = null;
 			if (this._pro)
 				this._initTelnet();
 		}.bind(this));
