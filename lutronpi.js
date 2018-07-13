@@ -52,8 +52,10 @@
 //  added start-time synchronous tasking to allow bridges to initialize without stepping over each other in the log
 //	modified startup calling scheme to allow no-parameters start of this module directly (default=Lutron & SmartThings discovery) or
 //           allow for a more complete specification of bridge types, IDs, network addresses, authentication and SmartThings IP
+// v 2.0.0-beta.3	2018.07.13 1830Z	wjh  Bill Hinkle (github billhinkle)
+//					handled longer (<=64 character) passwords (was <= 24)
 'use strict';
-const LUTRONPI_VERSION = '2.0.0 2018.05.10 1200Z';
+const LUTRONPI_VERSION = '2.0.0 2018.07.13 2030Z';
 console.log('%s Version %s', process.argv[1], LUTRONPI_VERSION);
 const mainHomeDir = process.mainModule.paths[0].split('node_modules')[0].slice(0, -1);
 // console.log('Root dir=%s',mainHomeDir);
@@ -1017,7 +1019,7 @@ function acquireBridgeAuthInfo(b, authQueryFields) {		// get authentication info
 		let aPassword = userConsole.questionNewPassword(
 		    bridgeName + ': [Enter] to skip, or enter ' + authQueryFields[aQFLast] + ': ',
 		    {limitMessage: 'The corresponding ' + devBridge[b].bridgeBrand + ' ' + authQueryFields[aQFLast],
-			 min:1,
+			 min:1, max:64,
 			 confirmMessage:'Re-enter the same ' + authQueryFields[aQFLast] + ' to confirm: '} );
 		if (aPassword) {
 			authInfo[authQueryFields[aQFLast]] = aPassword;
