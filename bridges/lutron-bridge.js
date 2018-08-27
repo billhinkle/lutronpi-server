@@ -19,6 +19,8 @@
 //					changed logger from module to per-bridge; const'd some constants
 // v 2.0.0-beta.3	2018.07.13 2030Z	wjh  Bill Hinkle (github billhinkle)
 //					corrected handling of null telnet connection upon bridge SSL reconnect
+// v 2.0.0-beta.4	2018.08.24 1250Z	wjh  Bill Hinkle (github billhinkle)
+//					corrected coordination of Telnet disconnect/reconnect with SSL reconnect
 //
 'use strict';
 module.exports = {
@@ -469,24 +471,27 @@ Bridge.prototype._connectSSL = function(resume, cbonconnect) {	// returns error 
 	return null;	// authentication retrieved, whether valid or not
 }
 Bridge.prototype._reconnect = function(attemptresume, backoffms) {
-	if (this._sslConnected()) {
-		this._sslClient.destroy();
-	}
-	this._expectResponse(false);
-	// kill the current pinger
-	this._expectPingback = false;
-	clearInterval(this._intervalPing);
+//b4	if (this._sslConnected()) {
+//b4		this._sslClient.destroy();
+//b4	}
+	this.disconnect();	//b4
+
+//b4	this._expectResponse(false);
+//b4	// kill the current pinger
+//b4	this._expectPingback = false;
+//b4	clearInterval(this._intervalPing);
 	if (this._timerBackoff)		// limit to one pending reconnect at a time
 		clearTimeout(this._timerBackoff);
 	// wait a bit before trying to reconnect to the bridge
+	// in the meantime, try to shut down Telnet connection
 	this._timerBackoff = setTimeout(function() {
 		this._timerBackoff = null;
 		this._logger.info("Lutron Bridge %s reconnecting...     ", this.bridgeID);
 		this._connectSSL(attemptresume, function lbReconnected(resumed) {
-			if (this._telnetClient !== null)
-				this._telnetClient.destroy();
-			this._telnetIsConnect = false;
-			this._telnetClient = null;
+//b4			if (this._telnetClient !== null)
+//b4				this._telnetClient.destroy();
+//b4			this._telnetIsConnect = false;
+//b4			this._telnetClient = null;
 			if (this._pro)
 				this._initTelnet();
 		}.bind(this));
@@ -1142,7 +1147,7 @@ Bridge.prototype._telnetHandler = function(telnetConnectCallback) {
 		else if (err.code === 'ECONNREFUSED' || err.code === 'ECONNRESET') {
 			// ... back off and restart connection from scratch
 			this._reconnect(false, LB_RECONNECT_DELAY_AUTHFAIL);
-			return
+			return;
 		}
 		else if (err.code !== undefined) { // likely not an SSL error
 			throw (err);
@@ -1162,7 +1167,8 @@ Bridge.prototype._telnetHandler = function(telnetConnectCallback) {
 		}
 		// but just in case someone turned off the Telnet Integration manually - try to reconnect every few minutes
 		this._intervalTelnetRetryPending = setInterval(function() {
-			this._initTelnet();
+			if (this._sslConnected())
+				this._initTelnet();
 		}.bind(this), LB_TELNET_RETRY_INTERVAL);
 	}.bind(this));
 
@@ -1352,10 +1358,16 @@ Bridge.prototype.updateBridgeComm = function(lbridgeip) {
 	}
 }
 Bridge.prototype.disconnect = function() {
+	this._expectResponse(false);
+	// kill the current pinger
+	this._expectPingback = false;
+	clearInterval(this._intervalPing);
+
 	if (this._telnetIsConnect) {
 		this._telnetIsConnect = false;
-		this._telnetClient.end('LOGOUT\r\n');
-		this._telnetClient = null;
+//b4		this._telnetClient.end('LOGOUT\r\n');
+		this._telnetClient.destroy();
+//b4		this._telnetClient = null;
 	}
 	if (this._sslConnected()) {
 		this._sslClient.destroy();
