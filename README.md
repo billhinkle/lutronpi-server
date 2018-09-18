@@ -9,7 +9,7 @@ on the SmartThings platform.
 
 ### FUNCTION:
 The LutronPi application serves to connect Lutron lighting bridges (SmartBridge, SmartBridge Pro,
-RA2/Select repeater) to a local hub of the Samsung SmartThings home authomation platform. There is an
+RA2/Select repeater) to a local hub of the Samsung SmartThings home automation platform. There is an
 'official' Lutron-to-SmartThings integration, which unfortunately does not integrate the Lutron Pico
 remote button fobs into SmartThings.  LutronPi _does_ connect the Pico buttons to SmartThings and allows those
 buttons to trigger SmartThings actions as well as native Lutron actions.
