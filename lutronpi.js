@@ -54,9 +54,14 @@
 //           allow for a more complete specification of bridge types, IDs, network addresses, authentication and SmartThings IP
 // v 2.0.0-beta.3	2018.07.13 1830Z	wjh  Bill Hinkle (github billhinkle)
 //					handled longer (<=64 character) passwords (was <= 24)
+// v 2.0.0-beta.5	2018.09.20 1200Z	wjh  Bill Hinkle (github billhinkle)
+//					tweaked startup logging to show name/version from package.json rather than hardcoded values
+//					tweaked SmartThings hub discovery to fix persistence problem
 'use strict';
-const LUTRONPI_VERSION = '2.0.0 2018.07.13 2030Z';
-console.log('%s Version %s', process.argv[1], LUTRONPI_VERSION);
+const LUTRONPI_PACKAGE = require('./package.json');
+const LUTRONPI_VERSION = LUTRONPI_PACKAGE.version;
+const LUTRONPI_NAME = LUTRONPI_PACKAGE.name;
+console.log('%s Version %s', LUTRONPI_NAME, LUTRONPI_VERSION);
 const mainHomeDir = process.mainModule.paths[0].split('node_modules')[0].slice(0, -1);
 // console.log('Root dir=%s',mainHomeDir);
 
@@ -436,10 +441,11 @@ function requestBridge(reqbody) {
 function stHubDiscover(discovery, logger, stHubFoundCallback) { // discovery = boolean stop/run, stHubFoundCallback(stHubID,stHubIP,isupdate)
 	if (!logger)
 		logger = function () { };
-	var mdnsSTHub = null;
+	if (typeof stHubDiscover.mdnsSTHub === 'undefined')
+		stHubDiscover.mdnsSTHub = null;
 
 	if (discovery) {
-		mdnsSTHub = mDNSHandler.find({ type: 'smartthings' },	function sniffSTHubs(stService, isupdate) {
+		stHubDiscover.mdnsSTHub = mDNSHandler.find({ type: 'smartthings' },	function sniffSTHubs(stService, isupdate) {
 			var stHubIP = stService.addresses.find( function(addr) {
 				return ip.isV4Format(addr);
 			});
@@ -448,7 +454,7 @@ function stHubDiscover(discovery, logger, stHubFoundCallback) { // discovery = b
 			// we really want a notification when any of this changes, too
 			if (!isupdate) {
 				logger('\n...SmartThings hub mDNS %s / now %d service(s) : %s',
-				       (isupdate) ? 'updated' : 'found', mdnsSTHub.services.length, (new Date()));
+				       (isupdate) ? 'updated' : 'found', stHubDiscover.mdnsSTHub.services.length, (new Date()));
 				logger('...SmartThings hub mDNS IP: ' + stHubIP);
 				logger('...SmartThings hub mDNS Name: ' + stService.name);
 				logger('...SmartThings hub mDNS FQDN: ' + stService.fqdn);
@@ -457,21 +463,21 @@ function stHubDiscover(discovery, logger, stHubFoundCallback) { // discovery = b
 			}
 			stHubFoundCallback(stService.name, stHubIP, isupdate);
 		});
-		mdnsSTHub.on('down', function downSTHubs(stService) {
+		stHubDiscover.mdnsSTHub.on('down', function downSTHubs(stService) {
 			var stHubIP = stService.addresses.find( function(addr) {
 				return ip.isV4Format(addr);
 			});
 			if (!stHubIP)
 				stHubIP = ipaddr.process(stService.addresses[0]).toString();
-			logger('\n...SmartThings hub mDNS down / now %d service(s): %s', mdnsSTHub.services.length, (new Date()));
+			logger('\n...SmartThings hub mDNS down / now %d service(s): %s', stHubDiscover.mdnsSTHub.services.length, (new Date()));
 			logger('...SmartThings hub mDNS IP: ' + stHubIP);
 			logger('...SmartThings hub mDNS Name: ' + stService.name);
 			logger('...SmartThings hub mDNS FQDN: ' + stService.fqdn);
 			logger('...SmartThings hub mDNS Host: ' + stService.host);
 		});
-	} else if (mdnsSTHub) {
-		mdnsSTHub.stop();
-		mdnsSTHub = null;
+	} else if (stHubDiscover.mdnsSTHub) {
+		stHubDiscover.mdnsSTHub.stop();
+		stHubDiscover.mdnsSTHub = null;
 	}
 }
 
