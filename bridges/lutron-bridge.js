@@ -21,6 +21,8 @@
 //					corrected handling of null telnet connection upon bridge SSL reconnect
 // v 2.0.0-beta.4	2018.08.24 1250Z	wjh  Bill Hinkle (github billhinkle)
 //					corrected coordination of Telnet disconnect/reconnect with SSL reconnect
+// v 2.0.0-beta.5	2018.09.24 2043Z	wjh  Bill Hinkle (github billhinkle)
+//					further tinkering with Telnet disconnect/reconnect and with SSL reconnect
 //
 'use strict';
 module.exports = {
@@ -297,7 +299,7 @@ function Bridge( lbridgeix, lbridgeid, lbridgeip, sendHubJSON, sentHubEvents ) {
 	this._sslBufferedData = '';
 
 	this._telnetClient = null;
-	this._telnetIsConnect = false;
+	this._telnetInSession = false;
 
 	this._allDevices = null;
 	this._allScenes = null;
@@ -461,7 +463,7 @@ Bridge.prototype._connectSSL = function(resume, cbonconnect) {	// returns error 
 
 		this._listenSSL(this._handleIncomingSSLData.bind(this));
 
-		if (!this._telnetIsConnect)
+		if (!this._telnetInSession)
 			this._setPingSSL();
 
 		if (typeof cbonconnect === "function")
@@ -471,28 +473,31 @@ Bridge.prototype._connectSSL = function(resume, cbonconnect) {	// returns error 
 	return null;	// authentication retrieved, whether valid or not
 }
 Bridge.prototype._reconnect = function(attemptresume, backoffms) {
-//b4	if (this._sslConnected()) {
-//b4		this._sslClient.destroy();
-//b4	}
-	this.disconnect();	//b4
-
-//b4	this._expectResponse(false);
-//b4	// kill the current pinger
-//b4	this._expectPingback = false;
-//b4	clearInterval(this._intervalPing);
+	if (this._sslConnected()) {
+		this._sslClient.destroy();
+	}
+	this._expectResponse(false);
+	// kill the current pinger
+	this._expectPingback = false;
+	clearInterval(this._intervalPing);
 	if (this._timerBackoff)		// limit to one pending reconnect at a time
 		clearTimeout(this._timerBackoff);
 	// wait a bit before trying to reconnect to the bridge
-	// in the meantime, try to shut down Telnet connection
 	this._timerBackoff = setTimeout(function() {
 		this._timerBackoff = null;
 		this._logger.info("Lutron Bridge %s reconnecting...     ", this.bridgeID);
 		this._connectSSL(attemptresume, function lbReconnected(resumed) {
-//b4			if (this._telnetClient !== null)
-//b4				this._telnetClient.destroy();
-//b4			this._telnetIsConnect = false;
-//b4			this._telnetClient = null;
-			if (this._pro)
+			if (!resumed /* || this._telnetConnected() */) {
+				this._telnetInSession = false;
+				if (this._telnetConnected()) {
+					this._telnetClient.on('close', function() {
+						if (this._pro)
+							this._initTelnet();
+					}.bind(this));
+					this._telnetClient.destroy();
+					/* 	this._telnetClient = null; */
+				}
+			} else if (this._pro)
 				this._initTelnet();
 		}.bind(this));
 	}.bind(this), backoffms);
@@ -529,7 +534,7 @@ Bridge.prototype._setErrorHandlerSSL = function() {
 			// if it's a bad certificate, just informational
 			if (err.message.indexOf('bad certificate') != -1 ||
 				err.message.indexOf('SSL alert number 42') != -1) {
-				this._logger.warn('Lutron Bridge %s #%d refused this authentication!', this.bridgeID, this.bridgeIP);
+				this._logger.warn('Lutron Bridge %s at %s refused this authentication!', this.bridgeID, this.bridgeIP);
 				return;
 			}
 			// otherwise let it go for now, maybe it's ok
@@ -889,7 +894,7 @@ Bridge.prototype._handleIncomingSSLData = function (msgStringData, digest) {
 			return;
 		}
 
-		if ((levelRequested || !this._telnetIsConnect)) {
+		if ((levelRequested || !this._telnetInSession)) {
 			this._logger.info('Lutron %s Bridge %s Zone %d status sent to ST hub',
 						   (this._pro) ? 'Pro' : 'Std', this.bridgeID, aZone);
 			this._sendHubJSON(jsonData); // unsolicited zone level updates from Pro bridge handled via Telnet
@@ -935,17 +940,20 @@ Bridge.prototype._pollBridge = function() {
 		}
 	}.bind(this), LB_POLL_INTERVAL);
 }
-Bridge.prototype._initTelnet = function(telnetConnectCallback) {
-	if (!this._telnetIsConnect) {
+Bridge.prototype._initTelnet = function(telnetInSessionCallback) {
+	if (!this._telnetInSession) {
 		this._logger.info('Starting Telnet connection to Lutron Bridge %s', this.bridgeID);
-		this._telnetIsConnect = false;
-		if (this._telnetClient !== null && !this._telnetClient.destroyed)
+		this._telnetInSession = false;
+		if (this._telnetConnected())
 			this._telnetClient.destroy();
 		this._telnetClient = new net.Socket();
-		this._telnetHandler(telnetConnectCallback);
+		this._telnetHandler(telnetInSessionCallback);
 	}
 }
-Bridge.prototype._telnetHandler = function(telnetConnectCallback) {
+Bridge.prototype._telnetConnected = function() {
+	return (!!this._telnetClient && !this._telnetClient.destroyed);
+}
+Bridge.prototype._telnetHandler = function(telnetInSessionCallback) {
 	this._telnetClient.on('data', function(data) {
 		var msgline;
 		var message;
@@ -954,8 +962,8 @@ Bridge.prototype._telnetHandler = function(telnetConnectCallback) {
 		// we have to account for GNET> prompts embedded within responses, and multiple-line responses
 		message = data.toString();
 		if (message.indexOf('GNET>') !== -1) { // a prompt, but it might've been embedded so reprocess line also
-			if (!this._telnetIsConnect) { // first prompt upon connection
-				_telnetConnectConfirmed.call(this, telnetConnectCallback);
+			if (!this._telnetInSession) { // first prompt upon connection
+				_telnetSessionConfirmed.call(this, telnetInSessionCallback);
 			}
 			else { // likely a ping, note that we did get a ping response
 				// currently taking a GNET> prompt as a ping response, but we COULD instead send
@@ -1158,18 +1166,17 @@ Bridge.prototype._telnetHandler = function(telnetConnectCallback) {
 	}.bind(this));
 
 	this._telnetClient.on('close', function() {
-		this._telnetIsConnect = false;
+		this._telnetInSession = false;
 		this._telnetClient = null;
 		this._logger.error('Disconnected Telnet from Lutron Pro Bridge %s', this.bridgeID);
 		if (this._sslConnected()) {
 			// hand the pinging duties back to the SSL connection
 			this._setPingSSL();
-		}
-		// but just in case someone turned off the Telnet Integration manually - try to reconnect every few minutes
-		this._intervalTelnetRetryPending = setInterval(function() {
-			if (this._sslConnected())
+			// but just in case someone turned off the Telnet Integration manually - try to reconnect every few minutes
+			this._intervalTelnetRetryPending = setInterval(function() {
 				this._initTelnet();
-		}.bind(this), LB_TELNET_RETRY_INTERVAL);
+			}.bind(this), LB_TELNET_RETRY_INTERVAL);
+		}
 	}.bind(this));
 
 	this._telnetClient.on('connect', function() {
@@ -1181,8 +1188,8 @@ Bridge.prototype._telnetHandler = function(telnetConnectCallback) {
 
 	this._telnetClient.setKeepAlive(true, 2000); // additionally, we'll ping once in a while to ensure re-connect
 
-	function _telnetConnectConfirmed(telnetConnectConfirmedCallback) {
-		this._telnetIsConnect = true;
+	function _telnetSessionConfirmed(telnetSessionConfirmedCallback) {
+		this._telnetInSession = true;
 		if (this._intervalTelnetRetryPending) {
 			clearInterval(this._intervalTelnetRetryPending);
 			this._intervalTelnetRetryPending = null;
@@ -1194,7 +1201,7 @@ Bridge.prototype._telnetHandler = function(telnetConnectCallback) {
 			clearInterval(this._intervalPing);
 		this._expectPingback = false;
 		this._intervalPing = setInterval(function() {
-			if (this._telnetIsConnect && !this._expectPingback) {
+			if (this._telnetInSession && !this._expectPingback) {
 				if (!this._expectResponse()) {
 					this._logger.trace('Ping Bridge %s', this.bridgeID);
 					process.stdout.write('                        \rPing ' + this.bridgeID + '... ');
@@ -1207,15 +1214,15 @@ Bridge.prototype._telnetHandler = function(telnetConnectCallback) {
 				// else avoid stepping on expected status response w/ping
 			// else either disconnect from Telnet or no ping response
 			// force a diconnect if necessary, wait out the socket timeout or other comm error that should ensue
-			} else if (this._telnetClient !== null && !this._telnetClient.destroyed) {
-				this._telnetIsConnect = false;
+			} else if (this._telnetConnected()) {
+				this._telnetInSession = false;
 				this._telnetClient.destroy();
 				this._telnetClient = null;
 			}
 		}.bind(this), LB_PING_INTERVAL);
 
-		if (telnetConnectConfirmedCallback)
-			telnetConnectConfirmedCallback();
+		if (telnetSessionConfirmedCallback)
+			telnetSessionConfirmedCallback();
 	}
 }
 Bridge.prototype._buttonMode = function(buttonDevice, buttonNumber) { // lipID, Lutron native button code
@@ -1358,16 +1365,10 @@ Bridge.prototype.updateBridgeComm = function(lbridgeip) {
 	}
 }
 Bridge.prototype.disconnect = function() {
-	this._expectResponse(false);
-	// kill the current pinger
-	this._expectPingback = false;
-	clearInterval(this._intervalPing);
-
-	if (this._telnetIsConnect) {
-		this._telnetIsConnect = false;
-//b4		this._telnetClient.end('LOGOUT\r\n');
-		this._telnetClient.destroy();
-//b4		this._telnetClient = null;
+	if (this._telnetInSession) {
+		this._telnetInSession = false;
+		this._telnetClient.end('LOGOUT\r\n');
+		this._telnetClient = null;
 	}
 	if (this._sslConnected()) {
 		this._sslClient.destroy();
@@ -1381,7 +1382,7 @@ Bridge.prototype.writeBridgeCommunique = function(msgBody, cb) {	// for comm for
 	}
 	else if (typeof msgBody === 'string') {
 		var firstChar = msgBody.charAt(0);
-		if (this._telnetIsConnect && ('?~#'.indexOf(msgBody.charAt(0)) >= 0)) {
+		if (this._telnetInSession && ('?~#'.indexOf(msgBody.charAt(0)) >= 0)) {
 			this._telnetClient.write(msgBody + '\r\n');
 		}
 		else
@@ -1479,7 +1480,7 @@ Bridge.prototype.sceneRequest = function(virtualButton, cb) {
 			virtualButton = Number(this._allScenes[snnameix].href.replace(
 				/\/virtualbutton\//i, ''));
 		}
-		if (this._telnetIsConnect) {
+		if (this._telnetInSession) {
 			this._telnetClient.write('#DEVICE,1,' + virtualButton + ',' +
 				BUTTON_OP_PRESS + '\r\n');
 			//			this._telnetClient.write('#DEVICE,1,' + virtualButton + ',' + BUTTON_OP_RELEASE + '\r\n');
@@ -1500,7 +1501,7 @@ Bridge.prototype.sceneRequest = function(virtualButton, cb) {
 }
 Bridge.prototype.zoneStatusRequest = function(deviceZone, deviceID, cb) {
 
-	if (this._telnetIsConnect) {
+	if (this._telnetInSession) {
 		// ST SmartApp may only send zone instead of both zone/device ID, for status inquiry, even for Pro bridge
 		//		deviceID = _lookupDeviceIDByZone(lbridgeix,deviceID,deviceZone);
 		if (deviceID) {
@@ -1538,7 +1539,7 @@ Bridge.prototype.zoneStatusRequest = function(deviceZone, deviceID, cb) {
 }
 Bridge.prototype.zoneSetLevelCommand = function(deviceZone, deviceID, deviceLevel, deviceFadeSec, cb) {
 
-	if (this._telnetIsConnect) {
+	if (this._telnetInSession) {
 		deviceID = this._lookupDeviceIDByZone(deviceID, deviceZone);
 		if (deviceID) {
 			this._telnetClient.write('#OUTPUT,' + deviceID + ',' + LIP_CMD_OUTPUT_SET +
@@ -1582,7 +1583,7 @@ Bridge.prototype.zoneChangeLevelCommand = function(deviceZone, deviceID, deviceL
 			cb(400); // unknown command
 		return;
 	}
-	if (this._telnetIsConnect) {
+	if (this._telnetInSession) {
 		deviceID = this._lookupDeviceIDByZone(deviceID, deviceZone);
 		if (deviceID) {
 			this._telnetClient.write('#OUTPUT,' + deviceID + ',' + rlsCmd[0] + '\r\n');
@@ -1642,7 +1643,7 @@ Bridge.prototype.buttonRemoteAction = function(deviceSN, buttonNumber, action, c
 				break;
 		}
 		if (picoAction) {
-			if (this._telnetIsConnect) {
+			if (this._telnetInSession) {
 				this._telnetClient.write('#DEVICE,' + lipID + ',' + buttonNumber + ',' +	picoAction + '\r\n');
 				this._expectResponse(1);
 				if (picoHoldTime) {
