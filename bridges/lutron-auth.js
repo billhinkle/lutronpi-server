@@ -9,11 +9,13 @@
 // PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,
 // ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 //
-// v 1.1.0  lutronpro (original)		nate schwartz (github njscwartz)  with ICS license
-// v 2.0.0+ lutronpi (forked)			wjh Bill hinkle (github billhinkle)
-// v 2.0.0	2018.05.10 1200Z			wjh  Bill Hinkle (github billhinkle)
+// v 1.1.0  		lutronpro (original)		nate schwartz (github njscwartz)  with ICS license
+// v 2.0.0+			 lutronpi (forked)	wjh Bill hinkle (github billhinkle)
+// v 2.0.0			2018.05.10 1200Z	wjh  Bill Hinkle (github billhinkle)
 //	refactored into separate modules for supervisor, discovery, authentication and bridge functions, so other bridge handlers can be plugged in
 //  see lutronpi.js supervisory module for additional/initial 2.0.0 revision list
+// v 2.0.0.beta-6	2018.09.26			wjh Bill Hinkle (github billhinkle)
+//					corrected help message prompting required auth fields upon error
 'use strict';
 module.exports = {
 	authenticate,
@@ -57,7 +59,7 @@ function authQueryFields() {
 
 function authenticate(authInfo, authCallback) { // authInfo={user:userID,password:pw},authCallback(err, lutronAuth)
 	if (!authInfo.user || !authInfo.password) {
-		logAuth.error('Lutron authentication requires: %o', authQueryFields);
+		logAuth.error('Lutron authentication requires: %o', authQueryFields());
 		authCallback('errorUserAuth');
 		return;
 	}
@@ -140,7 +142,7 @@ function authenticate(authInfo, authCallback) { // authInfo={user:userID,passwor
 
 	function callSignIn() {
 		var paramsObject = {
-			utf8: "✓",
+			utf8: "âœ“",
 			authenticity_token: authenticityToken,
 			'user[email]': user,
 			'user[password]': pw,
