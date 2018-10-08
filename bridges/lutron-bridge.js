@@ -23,7 +23,9 @@
 //					corrected coordination of Telnet disconnect/reconnect with SSL reconnect
 // v 2.0.0-beta.5	2018.09.24 2043Z	wjh  Bill Hinkle (github billhinkle)
 //					further tinkering with Telnet disconnect/reconnect and with SSL reconnect
-//
+// v 2.0.0-beta.6	2018.10.03 1200Z	wjh  Bill Hinkle (github billhinkle)
+//					corrected unlikely issue with zone lookups
+//					fixed potential event race in zone level request response
 'use strict';
 module.exports = {
 	Bridge
@@ -98,8 +100,8 @@ const communiqueBridgePicoButtonActionPressAndRelease3of3 =
 const communiqueBridgePicoButtonActionPressAndHold3of3 = '"PressAndHold"}}}\n';
 const communiqueBridgePicoButtonActionRelease3of3 = '"Release"}}}\n';
 
-const LB_REQUEST_TIMEOUT = 5000;	// was 1500
-const LB_RESPONSE_TIMEOUT = 20000;	// was 3000
+const LB_REQUEST_TIMEOUT = 1500;
+const LB_RESPONSE_TIMEOUT = 3000;
 const LB_RECONNECT_DELAY_RESET = 30000;
 const LB_RECONNECT_DELAY_AUTHFAIL = 15000;
 const LB_RECONNECT_DELAY_NORMMAX = 75000;
@@ -301,13 +303,13 @@ function Bridge( lbridgeix, lbridgeid, lbridgeip, sendHubJSON, sentHubEvents ) {
 	this._telnetClient = null;
 	this._telnetInSession = false;
 
-	this._allDevices = null;
-	this._allScenes = null;
+	this._allDevices = [];
+	this._allScenes = [];
 	this._picoList = {}; // map Pico SN to leap device, lip ID, button details & mode (sent from SmartThings)
 	this._zoneList = {
 		device: [],
 		isShade: []
-	} // map lighting/shade zones to device and type lighting vs shade
+	}; // map lighting/shade zones to device and type lighting vs shade
 
 	this._expectedResponseCnt = 0;
 	this._expectPingback = false;
@@ -1258,7 +1260,7 @@ Bridge.prototype._leapRequestZoneLevel = function(deviceZone) {
 }
 Bridge.prototype._lookupDeviceIDByZone = function(deviceID, deviceZone) {
 	if (!deviceID && deviceZone) { // if no device ID to use with telnet, reconstruct it from zone
-		if (this._zoneList) {
+		if (this._zoneList.device.length) {
 			var dev = this._zoneList.device[deviceZone];
 			deviceID = (dev && dev.ID) ? dev.ID : 0;
 		}
@@ -1267,7 +1269,7 @@ Bridge.prototype._lookupDeviceIDByZone = function(deviceID, deviceZone) {
 }
 Bridge.prototype._lookupZoneByDeviceID = function(deviceID, deviceZone) {
 	if (!deviceZone && deviceID) { // if no zone given, reconstruct it from device ID
-		if (this._zoneList) {
+		if (this._zoneList.device.length) {
 			deviceZone = this._zoneList.device.findIndex(function(tzLD) {
 				return (tzLD && (tzLD.ID == deviceID))
 			}.bind(this));
@@ -1292,7 +1294,7 @@ Bridge.prototype._lookupZoneByName = function(zoneName) {
 		var fqdnlen = fqdn.length;
 		deviceZone = 0;
 		if (fqdnlen >= 1) {
-			if (this._zoneList) {
+			if (this._zoneList.device.length) {
 				deviceZone = this._zoneList.device.findIndex(function(tzLD) {
 					return (tzLD &&
 						(fqdn[fqdnlen - 1] === tzLD.Name) &&
@@ -1503,7 +1505,7 @@ Bridge.prototype.zoneStatusRequest = function(deviceZone, deviceID, cb) {
 
 	if (this._telnetInSession) {
 		// ST SmartApp may only send zone instead of both zone/device ID, for status inquiry, even for Pro bridge
-		//		deviceID = _lookupDeviceIDByZone(lbridgeix,deviceID,deviceZone);
+		//		deviceID = this._lookupDeviceIDByZone(deviceID, deviceZone);
 		if (deviceID) {
 			this._telnetClient.write('?OUTPUT,' + deviceID + ',' + LIP_CMD_OUTPUT_REQ +
 				'\r\n');
@@ -1515,8 +1517,6 @@ Bridge.prototype.zoneStatusRequest = function(deviceZone, deviceID, cb) {
 	}
 	deviceZone = this._lookupZoneByName(deviceZone);
 	if (deviceZone) {
-		this._leapRequestZoneLevel(deviceZone);
-
 		var eventZLName = eventZoneLevel(this.bridgeID, deviceZone);
 		var timerGetLevel;
 		var handlerGetLevel = function(jsonResponse) {
@@ -1531,6 +1531,7 @@ Bridge.prototype.zoneStatusRequest = function(deviceZone, deviceID, cb) {
 		}.bind(this), LB_REQUEST_TIMEOUT);
 
 		this._bridgeEvents.once(eventZLName, handlerGetLevel);
+		this._leapRequestZoneLevel(deviceZone);
 	}
 	else {
 		if (typeof cb === 'function')
