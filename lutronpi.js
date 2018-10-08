@@ -57,6 +57,9 @@
 // v 2.0.0-beta.5	2018.09.20 1200Z	wjh  Bill Hinkle (github billhinkle)
 //					tweaked startup logging to show name/version from package.json rather than hardcoded values
 //					tweaked SmartThings hub discovery to fix persistence problem
+// v 2.0.0-beta.6	2018.09.25 1200Z	wjh  Bill Hinkle (github billhinkle)
+//					fail out of startup if no known bridge types specified
+//					fixed a callback race bug in device and scene requests
 'use strict';
 const LUTRONPI_PACKAGE = require('./package.json');
 const LUTRONPI_VERSION = LUTRONPI_PACKAGE.version;
@@ -202,13 +205,13 @@ app.get('/devices', function(req, res) {
 	// if this reply is to the SmartThings hub, reset all bridges' updated-devices flag
 	const stReqd = ip.isEqual(req.ip, SMARTTHINGS_IP);
 
+	var combinedDevicesList = [];
 	var gdbridgeok = [];
 	for (var i in devBridge) { // request a fresh list of devices for all known bridges
 		gdbridgeok[i] = false;
 		devBridge[i].deviceListRequest(i, stReqd, deviceReqGotDevicesCallback);
 	}
 
-	var combinedDevicesList = [];
 	function deviceReqGotDevicesCallback(gdbridgeix, gdbridgeDevList) {
 		if (!gdbridgeok[gdbridgeix]) {
 			gdbridgeok[gdbridgeix] = true;
@@ -236,13 +239,13 @@ app.get('/scenes', function(req, res) {
 	// if this reply is to the SmartThings hub, reset all bridges' updated-scenes flag
 	const stReqd = ip.isEqual(req.ip, SMARTTHINGS_IP);
 
+	var combinedScenesList = [];
 	var gsbridgeok = [];
 	for (let i in devBridge) { // for all known bridges
 		gsbridgeok[i] = false;
 		devBridge[i].sceneListRequest(i, stReqd, deviceReqGotScenesCallback);
 	}
 
-	var combinedScenesList = [];
 	function deviceReqGotScenesCallback(gsbridgeix, gsbridgeScenesList) {
 		if (!gsbridgeok[gsbridgeix]) {
 			gsbridgeok[gsbridgeix] = true;
@@ -576,7 +579,7 @@ function initSmartThingsComm(initSmartThingsID, initSmartThingsIP) {	// initiali
 function sendSmartThingsJSON(jsonData) {	// common function to send to ST
 	if (ipaddr.isValid(SMARTTHINGS_IP)) {
 		logComm.info('Sending to SmartThings @ %s:%s', SMARTTHINGS_IP, SMARTTHINGS_PORT);
-		logComm.trace(jsonData);
+		logComm.debug(jsonData);
 
 		request({
 			url: 'http:\/\/' + SMARTTHINGS_IP + ':' + SMARTTHINGS_PORT,
@@ -818,6 +821,13 @@ exports.startup = function(bridgeSpec, stHubIP) {
 	var bridgeInitDiscoverTimer = setTimeout( function bridgeAllInitFound () {
 		// 	all initial bridges have presumably been discovered by now
 
+		log.debug('bridgeConnectList=%o',bridgeConnectList);
+		// load the necessary bridge operation modules
+		for (let b = 0; b < bridgeConnectList.length; b++) {
+			if (!bridgeOperationModuleRequire(bridgeConnectList[b].bType))
+				bridgeConnectList.splice(b,1);
+		}
+
 		bridgeInitCnt = bridgeConnectList.length;
 		if (!bridgeInitCnt) {
 			log.warn('No bridges specified or discovered');
@@ -827,13 +837,6 @@ exports.startup = function(bridgeSpec, stHubIP) {
 			}
 			process.exit(0);
 			return;
-		}
-
-		log.debug('bridgeConnectList=%o',bridgeConnectList);
-		// load the necessary bridge operation modules
-		for (let b = 0; b < bridgeInitCnt; b++) {
-			if (!bridgeOperationModuleRequire(bridgeConnectList[b].bType))
-				bridgeConnectList[b].bType = null;
 		}
 
 		// create all bridge instances from the create/initialize list
@@ -889,7 +892,7 @@ exports.startup = function(bridgeSpec, stHubIP) {
 		}
 		// once all the initial bridges are initialized (or not), any newly-discovered bridges can be initialized one-by-one
 
-	}, BRIDGE_DISCOVERY_TIMEOUT);
+	}, (bridgeDiscoverList.length ? BRIDGE_DISCOVERY_TIMEOUT : 0));
 }
 
 // this module can be run directly from Node: so self-start with no parameters
