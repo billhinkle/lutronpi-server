@@ -11,7 +11,7 @@
 //
 // ref v 1.1.0  lutronpro (original)		nate schwartz (github njscwartz)  with ICS license
 // ref v 2.0.0+ lutronpi (forked)			wjh Bill hinkle (github billhinkle)
-// v 1.0.0	2018.10.08 1200Z				wjh  Bill Hinkle (github billhinkle)
+// v 1.0.0	2018.10.19 1200Z				wjh  Bill Hinkle (github billhinkle)
 //			bridge code for Lutron Integration Protocol (LIP) Telnet-only interface
 //			e.g. for Radio RA, Homeworks QS etc.
 //
@@ -830,7 +830,6 @@ Bridge.prototype.sceneListRequest = function(dReqSceneListIX, dReqSceneListReset
 		return;
 	}.bind(this), LB_REQUEST_TIMEOUT);
 	this._dReqSceneListCallback.push(handlerGetSceneList);
-	this._expectResponse(1);
 //!!!! Here is where we could request the XML virtual button list, but...
 //	this._writeSSL(communiqueBridgeScenesRequest);
 //	this._expectResponse(1);
