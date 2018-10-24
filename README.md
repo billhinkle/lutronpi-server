@@ -20,14 +20,15 @@ repeater, not to a standard retail SmartBridge.  Dimmer fading also only works f
 ### FORM:
 The LutronPi application comprises two elements:
   1. A server application running under Node.js on an independent computer (e.g. a Raspberry Pi or the like,
-  or a desktop computer, or laptop, or potentially a NAS drive, etc.).  The server must be on the same local
-  Ethernet subnet as the Lutron bridge(s) and the SmartThings hub.  
+  or a desktop computer, or laptop, or potentially a NAS drive, etc.) on the local LAN.  The server must be
+  on the same local Ethernet subnet as the Lutron bridge(s) and the SmartThings hub.  
   See: https://github.com/billhinkle/lutronpi-server  
   2. A SmartThings "SmartApp" service manager application, along with its associated device handlers. These
   Groovy modules all run on the Samsung SmartThings platform, both local to the hub and in "the cloud."  
   See: https://github.com/billhinkle/lutronpi-smartthings  
 
 ### INSTALLATION:
+_Important:_ SmartThings only allows one SmartApp/child device to connect to the same local LAN device (at a single  MAC address).  So if you've got another SmartApp/child device already connecting to the same local LAN device you expect to use for a LutronPi server host platform, you'll have to change to a different LAN device or figure out a way to run on a different LAN port at a different MAC address.
   * Install Node.js for your host computer platform; see https://nodejs.org/en/download/
   * Make a directory/folder for LutronPi Server; e.g. `mkdir lutronpi`
   * Copy the contents of the lutronpi-server GitHub repository 
